@@ -1,173 +1,175 @@
 # Architecture — clo-clo-tes-la
 
-> Document vivant — état au 2026-05-23 (MVP, version 0.1). Toute modification structurelle du projet doit être reportée ici.
+> Living document — state as of 2026-05-23 (MVP, version 0.1). Any structural change to the project should be reflected here.
 
-## 1. Contexte et objectifs
+## 1. Context and goals
 
-### 1.1 Problème résolu
-Le navigateur web embarqué dans les voitures Tesla peut exécuter des webapps tierces. Il existe déjà des projets comme [Taada](https://taada.app) qui exploitent cette surface pour faire tourner Android Auto via streaming WebRTC. **clo-clo-tes-la** suit la même philosophie pour offrir un assistant vocal Claude accessible depuis le tableau de bord de la voiture, sans nécessiter d'application native ni de jailbreak.
+### 1.1 Problem solved
+The web browser embedded in Tesla cars can run third-party webapps. Existing projects such as [Taada](https://taada.app) already exploit this surface to stream Android Auto over WebRTC. **clo-clo-tes-la** follows the same philosophy to provide a Claude-based voice assistant accessible from the dashboard, with no native app and no jailbreak.
 
-### 1.2 Utilisateur cible
-Conducteur Tesla individuel, qui veut discuter avec Claude en français pendant ses trajets (idéation, questions générales, copilote de voyage), sans toucher à son téléphone.
+### 1.2 Target user
+A solo Tesla driver who wants to chat with Claude in French during trips (brainstorming, general questions, travel copilot), without touching their phone.
 
-### 1.3 Contraintes structurantes
-| Contrainte | Conséquence architecturale |
+### 1.3 Structural constraints
+| Constraint | Architectural consequence |
 |---|---|
-| **Navigateur Tesla** = Chromium ancien, support API web variable | Pas d'API moderne supposée acquise. Web Speech API à valider expérimentalement. |
-| **Mic web** = HTTPS obligatoire (origine sécurisée) | Tunnel HTTPS indispensable, même en dev. |
-| **Conducteur attentif à la route** | Réponses vocales courtes, UX push-to-talk simple (un seul gros bouton), pas de lecture d'écran. |
-| **Projet personnel, budget MVP** | Pas d'infra cloud, pas de DB, pas d'auth. Hébergement sur Mac local. |
-| **Objectif d'apprentissage SDLC** | Documentation explicite, conventions claires, séparation propre frontend/backend. |
+| **Tesla browser** = old Chromium, uneven web-API support | No modern API can be assumed. Web Speech API has to be validated experimentally. |
+| **Web microphone** = HTTPS required (secure origin) | HTTPS tunnel mandatory, even in dev. |
+| **Driver focused on the road** | Short spoken replies, simple push-to-talk UX (single large button), no screen reading. |
+| **Personal project, MVP budget** | No cloud infra, no DB, no auth. Hosting on a local Mac. |
+| **SDLC learning objective** | Explicit documentation, clear conventions, clean frontend/backend separation. |
 
-### 1.4 Périmètre MVP (v0.1)
-**Inclus :** push-to-talk, conversation FR avec Claude, historique en mémoire client, déploiement local via cloudflared.
-**Exclus :** authentification, persistance, wake-word, multi-utilisateurs, mode hands-free, intégration GPS, voix premium.
+### 1.4 MVP scope (v0.1)
+**In scope:** push-to-talk, French conversation with Claude, in-memory client-side history, local deployment via cloudflared.
+**Out of scope:** authentication, persistence, wake-word, multi-user, hands-free mode, GPS integration, premium voice.
+
+The user-facing language is French — system prompts and UI strings live in French inside the codebase. Project documentation (this file, the README) is in English.
 
 ---
 
-## 2. Vue d'ensemble (diagramme de contexte)
+## 2. Overview (context diagram)
 
 ```mermaid
 flowchart LR
-    User([Conducteur<br/>au volant])
+    User([Driver<br/>at the wheel])
 
-    subgraph Voiture
-      Tesla[Navigateur Tesla<br/>Chromium]
+    subgraph Car
+      Tesla[Tesla browser<br/>Chromium]
     end
 
     subgraph Cloud["Cloudflare Edge"]
-      CF[Tunnel HTTPS<br/>trycloudflare.com]
+      CF[HTTPS tunnel<br/>trycloudflare.com]
     end
 
-    subgraph Mac["Mac local — always-on"]
-      App[clo-clo-tes-la<br/>FastAPI + statiques]
+    subgraph Mac["Local Mac — always-on"]
+      App[clo-clo-tes-la<br/>FastAPI + static assets]
     end
 
     subgraph Anthropic["api.anthropic.com"]
       Claude[(Claude Sonnet 4.6)]
     end
 
-    User <-->|voix| Tesla
+    User <-->|voice| Tesla
     Tesla <-->|HTTPS| CF
-    CF <-->|tunnel chiffré| App
+    CF <-->|encrypted tunnel| App
     App -->|POST /v1/messages| Claude
 ```
 
-Quatre acteurs / composants :
+Four actors / components:
 
-1. **Conducteur** : émet et reçoit de l'audio en français.
-2. **Navigateur Tesla** : exécute la SPA, capture l'audio (Web Speech Recognition), restitue l'audio (Web Speech Synthesis).
-3. **Backend local + tunnel Cloudflare** : sert la SPA et relaie l'appel API Claude. Le tunnel donne une URL HTTPS publique sans avoir à exposer le Mac directement à Internet.
-4. **API Anthropic** : génère la réponse texte.
+1. **Driver** — emits and receives French audio.
+2. **Tesla browser** — runs the SPA, captures audio (Web Speech Recognition), plays back audio (Web Speech Synthesis).
+3. **Local backend + Cloudflare tunnel** — serves the SPA and relays the Claude API call. The tunnel exposes a public HTTPS URL without ever opening an inbound port on the Mac.
+4. **Anthropic API** — generates the text response.
 
 ---
 
-## 3. Composants
+## 3. Components
 
-### 3.1 Frontend — SPA statique
+### 3.1 Frontend — static SPA
 
-**Fichiers :** [frontend/index.html](../frontend/index.html), [frontend/app.js](../frontend/app.js), [frontend/style.css](../frontend/style.css).
+**Files:** [frontend/index.html](../frontend/index.html), [frontend/app.js](../frontend/app.js), [frontend/style.css](../frontend/style.css).
 
-**Stack :** HTML/CSS/JavaScript vanilla. Aucun framework, aucun build step. Servi en statique par le backend FastAPI via `StaticFiles`.
+**Stack:** vanilla HTML/CSS/JavaScript. No framework, no build step. Served as static assets by the FastAPI backend via `StaticFiles`.
 
-**Responsabilités :**
-- Afficher l'UI push-to-talk (un gros bouton circulaire, deux bulles de transcript, un indicateur de statut).
-- Gérer le cycle d'écoute via `webkitSpeechRecognition` (STT, langue `fr-FR`).
-- Maintenir l'historique de conversation en mémoire (variable `history` côté client).
-- Appeler `POST /chat` avec l'historique complet à chaque tour.
-- Restituer la réponse via `SpeechSynthesisUtterance` (TTS, langue `fr-FR`).
+**Responsibilities:**
+- Render the push-to-talk UI (a single large circular button, two transcript bubbles, a status indicator).
+- Drive the listen cycle through `webkitSpeechRecognition` (STT, `fr-FR` locale).
+- Keep the conversation history in memory (client-side `history` variable).
+- Call `POST /chat` with the full history at every turn.
+- Play back the response through `SpeechSynthesisUtterance` (TTS, `fr-FR` locale).
 
-**Choix de conception :**
-- **Pas de framework** : MVP, surface minimale, débogage trivial dans n'importe quel navigateur.
-- **Push-to-talk via `pointerdown`/`pointerup`** plutôt que click : meilleur retour visuel (état "appuyé"), pas d'ambiguïté sur quand l'app écoute.
-- **Historique côté client** : pas besoin de session backend, simplicité maximale. Limite : conversation perdue au refresh.
-- **Web Speech API** vs enregistrement audio + Whisper : si elle marche dans la Tesla, c'est zéro coût STT et latence quasi-nulle. À valider — c'est le **risque #1 du projet**.
+**Design choices:**
+- **No framework** — MVP scope, minimal surface, trivial debugging in any browser.
+- **Push-to-talk via `pointerdown` / `pointerup`** rather than click — better visual feedback (pressed state), no ambiguity about when the app is listening.
+- **History on the client** — no server-side session to manage, maximum simplicity. Trade-off: conversation is lost on refresh.
+- **Web Speech API** vs. audio recording + Whisper: if it works in the Tesla browser, STT cost is zero and latency near-zero. To be validated — this is the **#1 project risk**.
 
 ### 3.2 Backend — FastAPI
 
-**Fichier :** [backend/main.py](../backend/main.py).
+**File:** [backend/main.py](../backend/main.py).
 
-**Stack :** Python 3.12, FastAPI 0.115, Uvicorn 0.32, SDK Anthropic 0.104, python-dotenv.
+**Stack:** Python 3.12, FastAPI 0.115, Uvicorn 0.32, Anthropic SDK 0.104, python-dotenv.
 
-**Endpoints :**
+**Endpoints:**
 
-| Méthode | Chemin | Rôle |
+| Method | Path | Role |
 |---|---|---|
-| `POST` | `/chat` | Reçoit `{messages: [{role, content}, …]}`, appelle Claude, retourne `{reply: "…"}`. |
-| `GET` | `/healthz` | Check de vie : `{status, model}`. Pratique pour valider le tunnel. |
-| `GET` | `/`, `/index.html`, `/app.js`, `/style.css` | Sert les statiques du dossier `frontend/`. |
+| `POST` | `/chat` | Receives `{messages: [{role, content}, …]}`, calls Claude, returns `{reply: "…"}`. |
+| `GET` | `/healthz` | Liveness check: `{status, model}`. Handy to validate the tunnel. |
+| `GET` | `/`, `/index.html`, `/app.js`, `/style.css` | Serves the static assets from `frontend/`. |
 
-**Configuration via environnement** (chargée depuis `.env` avec `override=True`) :
+**Configuration via environment** (loaded from `.env` with `override=True`):
 
-| Variable | Défaut | Rôle |
+| Variable | Default | Role |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | *(obligatoire)* | Clé d'authentification API Anthropic. |
-| `CLOCLO_MODEL` | `claude-sonnet-4-6` | ID du modèle à utiliser. Swap facile pour Haiku 4.5 (plus rapide/moins cher) ou Opus 4.7 (plus capable). |
+| `ANTHROPIC_API_KEY` | *(required)* | Anthropic API authentication key. |
+| `CLOCLO_MODEL` | `claude-sonnet-4-6` | Model ID to use. Easy swap for Haiku 4.5 (faster/cheaper) or Opus 4.7 (more capable). |
 
-**Prompt système :** définit l'identité "Clo-clo", impose réponses courtes (2-3 phrases), français, style oral pur (pas de markdown). Voir constante `SYSTEM_PROMPT` dans [backend/main.py](../backend/main.py).
+**System prompt:** defines the "Clo-clo" persona, enforces short replies (2-3 sentences), French, plain spoken style (no markdown). The prompt itself is in French because it's instructing Claude to speak French to the driver. See the `SYSTEM_PROMPT` constant in [backend/main.py](../backend/main.py).
 
-**CORS :** `allow_origins=["*"]` pour le MVP. À restreindre dès qu'un domaine stable est utilisé (voir §7).
+**CORS:** `allow_origins=["*"]` for the MVP. To be tightened as soon as a stable domain is used (see §7).
 
-### 3.3 Tunnel HTTPS — cloudflared
+### 3.3 HTTPS tunnel — cloudflared
 
-**Pourquoi un tunnel ?**
-Les APIs `getUserMedia` (micro) et `SpeechRecognition` exigent une **origine sécurisée** (HTTPS ou `localhost`). Le navigateur Tesla voit le Mac comme une origine externe → HTTPS obligatoire. Acheter un certificat + exposer le port du Mac à Internet serait disproportionné.
+**Why a tunnel?**
+The `getUserMedia` (microphone) and `SpeechRecognition` APIs require a **secure origin** (HTTPS or `localhost`). The Tesla browser sees the Mac as a remote origin → HTTPS is mandatory. Buying a certificate plus exposing a port from the Mac to the public internet would be overkill.
 
-**Mode actuel — Quick Tunnel :**
+**Current mode — Quick Tunnel:**
 ```bash
 cloudflared tunnel --url http://localhost:8000
 ```
-- Cloudflare génère une URL aléatoire éphémère (`https://xxxx.trycloudflare.com`).
-- Tunnel **sortant** : le Mac n'a pas besoin d'ouvrir de port entrant ; cloudflared maintient une connexion permanente vers l'edge Cloudflare.
-- Gratuit, instantané, aucun compte requis.
-- **Limite** : URL aléatoire qui change à chaque relance. Pas adapté à l'usage quotidien (à retaper dans la Tesla à chaque fois).
+- Cloudflare generates a random, ephemeral URL (`https://xxxx.trycloudflare.com`).
+- **Outbound** tunnel: the Mac doesn't have to open any inbound port; cloudflared keeps a persistent connection out to the Cloudflare edge.
+- Free, instant, no account required.
+- **Limitation**: the URL changes on every restart. Not suitable for daily use (you'd have to retype the URL into the Tesla each time).
 
-**Évolution prévue — Named Tunnel :**
-URL stable du type `cloclo.mon-domaine.fr`. Nécessite un nom de domaine et le DNS géré par Cloudflare. Mise en place documentée à part le moment venu.
+**Planned evolution — Named Tunnel:**
+A stable URL such as `cloclo.my-domain.com`. Requires a domain name and Cloudflare-managed DNS. Setup will be documented separately when needed.
 
 ---
 
-## 4. Flux d'une interaction (diagramme de séquence)
+## 4. Interaction flow (sequence diagram)
 
 ```mermaid
 sequenceDiagram
-    actor U as Conducteur
-    participant T as Navigateur Tesla
-    participant SR as SpeechRecognition<br/>(navigateur)
-    participant SS as SpeechSynthesis<br/>(navigateur)
-    participant CF as Tunnel<br/>Cloudflare
-    participant BE as Backend<br/>FastAPI
-    participant CL as API Claude
+    actor U as Driver
+    participant T as Tesla browser
+    participant SR as SpeechRecognition<br/>(browser)
+    participant SS as SpeechSynthesis<br/>(browser)
+    participant CF as Cloudflare<br/>tunnel
+    participant BE as FastAPI<br/>backend
+    participant CL as Claude API
 
-    U->>T: pointerdown sur bouton PTT
+    U->>T: pointerdown on PTT button
     T->>SR: start() (lang=fr-FR)
-    Note over SR: bouton rouge<br/>statut "J'écoute…"
-    U->>SR: parole captée par le micro
-    U->>T: pointerup (relâche)
+    Note over SR: button turns red<br/>status "Listening…"
+    U->>SR: speech captured by mic
+    U->>T: pointerup (release)
     T->>SR: stop()
     SR-->>T: onresult(transcript)
-    T->>T: afficher bulle utilisateur
-    Note over T: statut "Clo-clo réfléchit…"
+    T->>T: render user bubble
+    Note over T: status "Clo-clo is thinking…"
     T->>CF: POST /chat<br/>{messages: history}
     CF->>BE: forward HTTPS → HTTP
     BE->>CL: messages.create(<br/>  model, system, messages)
     CL-->>BE: response.content (text)
     BE-->>CF: {reply: "…"}
     CF-->>T: {reply: "…"}
-    T->>T: afficher bulle Claude<br/>+ ajout à l'historique
-    Note over T: statut "Clo-clo parle…"
+    T->>T: render Claude bubble<br/>+ append to history
+    Note over T: status "Clo-clo is speaking…"
     T->>SS: speak(reply, lang=fr-FR)
-    SS-->>U: audio synthétisé<br/>(haut-parleurs Tesla)
-    Note over T: statut "Prêt"
+    SS-->>U: synthesized audio<br/>(Tesla speakers)
+    Note over T: status "Ready"
 ```
 
 ---
 
-## 5. Modèle de données
+## 5. Data model
 
-Aucune persistance — état entièrement volatil.
+No persistence — state is fully volatile.
 
-**Format des messages échangés avec `/chat`** :
+**Message format exchanged with `/chat`:**
 
 ```json
 {
@@ -179,112 +181,112 @@ Aucune persistance — état entièrement volatil.
 }
 ```
 
-Réponse :
+Response:
 ```json
 { "reply": "Lima." }
 ```
 
-L'historique grossit à chaque tour. Aucune compression / résumé automatique pour l'instant — à surveiller si conversations longues (impact coût + latence).
+The history grows with every turn. There is no automatic compression / summarization yet — to watch out for in long conversations (impact on cost and latency).
 
 ---
 
-## 6. Choix technologiques — arbitrages
+## 6. Technology choices — trade-offs
 
-| Choix | Alternative écartée | Raison |
+| Choice | Alternative considered | Reason |
 |---|---|---|
-| **FastAPI** | Flask, Django, Node/Express | Async natif, validation Pydantic gratuite, OpenAPI auto, idéal pour proxy simple. |
-| **HTML/JS vanilla** | React, Vue, Svelte | Pas de build, surface minimale, débogage trivial dans le navigateur Tesla. Une seule page de toute façon. |
-| **Web Speech API** | MediaRecorder → Whisper backend | Latence ~zéro, coût zéro, code 10× plus simple. **Risque : compat Tesla.** Plan B documenté §8. |
-| **SpeechSynthesis (TTS navigateur)** | ElevenLabs, OpenAI TTS | Gratuit, voix française correcte. Upgrade ElevenLabs prévu en v2 pour qualité supérieure. |
-| **Cloudflared quick tunnel** | ngrok, frp, port forwarding + Let's Encrypt | Gratuit, sortant uniquement (sécurité), instantané, suffisant pour MVP. |
-| **Claude Sonnet 4.6** | Haiku 4.5 (plus rapide), Opus 4.7 (plus capable) | Sonnet = équilibre qualité/latence pour conversation casual. Switch trivial via `CLOCLO_MODEL`. |
-| **`.env` + python-dotenv** | Secrets manager (Vault, 1Password CLI…) | Projet perso, 1 secret unique, surface minimale. |
+| **FastAPI** | Flask, Django, Node/Express | Native async, free Pydantic validation, automatic OpenAPI, ideal for a simple proxy. |
+| **Vanilla HTML/JS** | React, Vue, Svelte | No build step, minimal surface, trivial debugging in the Tesla browser. Single page anyway. |
+| **Web Speech API** | MediaRecorder → backend Whisper | Near-zero latency, zero cost, code is 10× simpler. **Risk: Tesla compatibility.** Plan B documented in §8. |
+| **SpeechSynthesis (browser TTS)** | ElevenLabs, OpenAI TTS | Free, decent French voice. ElevenLabs upgrade planned for v2 to improve quality. |
+| **Cloudflared quick tunnel** | ngrok, frp, port forwarding + Let's Encrypt | Free, outbound only (security win), instant, sufficient for MVP. |
+| **Claude Sonnet 4.6** | Haiku 4.5 (faster), Opus 4.7 (more capable) | Sonnet is the quality/latency sweet spot for casual conversation. Trivial swap via `CLOCLO_MODEL`. |
+| **`.env` + python-dotenv** | Secrets manager (Vault, 1Password CLI…) | Personal project, single secret, minimal surface. |
 
 ---
 
-## 7. Sécurité
+## 7. Security
 
-### Modèle de menace (MVP)
-| Risque | Mitigation actuelle | À durcir |
+### Threat model (MVP)
+| Risk | Current mitigation | To harden |
 |---|---|---|
-| Fuite de la clé API Anthropic | `.env` gitignored ; `.env.example` ne contient qu'un placeholder | RAS |
-| Endpoint `/chat` public sans auth | Aucune | **v0.2** : token bearer dans header, validé par middleware FastAPI |
-| Abus de coût (qqn devine l'URL trycloudflare) | URL aléatoire éphémère | Idem : auth bearer, et budget cap côté Anthropic console |
-| CORS ouvert (`*`) | Acceptable car endpoint sans auth ni cookie | Restreindre à `https://cloclo.<domaine>` quand tunnel nommé |
-| MITM | HTTPS de bout en bout (TLS terminé par Cloudflare, puis tunnel chiffré jusqu'au Mac) | RAS |
-| Charge utile malveillante (`messages` contenant code/JS) | Backend ne fait que forwarder, frontend rend uniquement en `textContent` (pas `innerHTML`) | RAS |
-| Injection de prompt visant à exfiltrer | Pas de données sensibles côté backend, pas de tools, pas de RAG | RAS pour MVP |
+| Leak of the Anthropic API key | `.env` is gitignored; `.env.example` contains only a placeholder | None |
+| `/chat` endpoint public with no auth | None | **v0.2**: bearer token in header, validated by FastAPI middleware |
+| Cost abuse (someone guesses the trycloudflare URL) | Random ephemeral URL | Same: bearer auth, plus a budget cap in the Anthropic console |
+| Open CORS (`*`) | Acceptable as long as endpoint has no auth or cookie | Restrict to `https://cloclo.<domain>` once the named tunnel is up |
+| MITM | End-to-end HTTPS (TLS terminated at Cloudflare, then encrypted tunnel to the Mac) | None |
+| Malicious payload (`messages` containing code/JS) | Backend only forwards; frontend renders via `textContent`, never `innerHTML` | None |
+| Prompt injection aiming to exfiltrate | No sensitive data on the backend, no tools, no RAG | None for MVP |
 
-### Hygiène
-- `load_dotenv(override=True)` pour neutraliser une éventuelle vieille valeur env (cf. note `claude-code-env-injection`).
-- Aucune dépendance JS externe → pas de risque de supply chain frontend.
-- Dépendances Python pinnées (versions exactes dans [backend/requirements.txt](../backend/requirements.txt)).
-
----
-
-## 8. Limites connues
-
-1. **Web Speech API Tesla : non vérifié.** Le navigateur Tesla est un Chromium ancien dont le support des APIs vocales n'est pas documenté. Si le test du jalon échoue : **Plan B** — `MediaRecorder` côté frontend (mieux supporté), POST de l'audio vers un nouvel endpoint `/transcribe` (Whisper API ou modèle local), retour du texte, puis flux `/chat` inchangé.
-2. **Tunnel quick éphémère.** URL change à chaque redémarrage. Solution : named tunnel + domaine perso (post-MVP).
-3. **Mac obligatoirement allumé.** Single point of failure. À terme : déploiement sur un Raspberry Pi domestique ou petit VPS.
-4. **Pas d'auth.** Toute personne avec l'URL peut consommer ta quota Claude.
-5. **Pas de gestion d'erreur réseau côté frontend.** Pas de retry, pas de timeout explicite, pas de mode dégradé hors-ligne.
-6. **Pas de tests automatisés.** À ajouter avant toute évolution structurelle.
-7. **Conversation perdue au refresh.** OK pour MVP, à persister en `sessionStorage` au minimum.
-8. **Aucun logging structuré.** Uvicorn logs stdout uniquement, pas d'observabilité au-delà.
-9. **Pas de limite de longueur historique.** Une conversation très longue finira par : (a) coûter cher, (b) approcher la fenêtre de contexte du modèle.
-10. **Comportement audio en roulant non testé.** Le bruit de route, les annonces GPS, et les éventuelles coupures audio Tesla (téléphone qui sonne, etc.) peuvent dégrader fortement l'UX.
+### Hygiene
+- `load_dotenv(override=True)` to neutralize any stale env variable (see the `claude-code-env-injection` note).
+- Zero external JS dependency → no frontend supply-chain risk.
+- Python dependencies pinned (exact versions in [backend/requirements.txt](../backend/requirements.txt)).
 
 ---
 
-## 9. Évolution possible — feuille de route indicative
+## 8. Known limitations
 
-| Version | Périmètre | Effort estimé |
+1. **Web Speech API on Tesla: unverified.** The Tesla browser is an old Chromium with undocumented support for the voice APIs. If the on-car test fails: **Plan B** — `MediaRecorder` on the frontend (better support), POST the audio to a new `/transcribe` endpoint (Whisper API or local model), return the text, then the `/chat` flow stays the same.
+2. **Ephemeral quick tunnel.** URL changes on every restart. Solution: named tunnel + personal domain (post-MVP).
+3. **The Mac must stay on.** Single point of failure. Eventually: deploy to a home Raspberry Pi or a small VPS.
+4. **No auth.** Anyone with the URL can burn through your Claude quota.
+5. **No frontend network-error handling.** No retry, no explicit timeout, no offline fallback.
+6. **No automated tests.** To add before any structural evolution.
+7. **Conversation lost on refresh.** OK for MVP, should at least persist to `sessionStorage`.
+8. **No structured logging.** Uvicorn logs to stdout only, no observability beyond that.
+9. **No history-length cap.** A very long conversation will eventually (a) get expensive, (b) approach the model's context window.
+10. **In-car audio behavior untested.** Road noise, GPS announcements, and potential Tesla audio interruptions (incoming phone call, etc.) may significantly degrade UX.
+
+---
+
+## 9. Possible evolution — indicative roadmap
+
+| Version | Scope | Estimated effort |
 |---|---|---|
-| **v0.1 (actuel)** | MVP : PTT + Web Speech API + tunnel quick | livré |
-| **v0.2** | Auth bearer token, persistance historique en `sessionStorage`, gestion d'erreur réseau (toast + retry) | 1 soirée |
-| **v0.3** | Plan B Whisper si Web Speech API KO + bascule automatique selon capacités navigateur | 1 week-end |
-| **v0.4** | Tunnel nommé Cloudflare + domaine perso + service launchd auto-démarrage | 1 soirée |
-| **v0.5** | Tests pytest (backend) + GitHub Actions CI | 1 week-end |
-| **v1.0** | Streaming réponse Claude + TTS phrase-par-phrase pour réduire la latence perçue | 1 week-end |
-| **v1.1** | Voix ElevenLabs FR premium (option) | 1 soirée |
-| **v2.0** | Wake-word "Hey Clo-clo" (Porcupine ou équivalent) | 1 week-end |
-| **v2.1** | Tool use Claude : météo, position GPS via téléphone compagnon, recherche POI, contrôle musique | 1 semaine |
-| **v3.0** | Migration Mac local → VPS / Raspberry Pi avec observabilité (logs structurés, Grafana) | 1 week-end |
+| **v0.1 (current)** | MVP: PTT + Web Speech API + quick tunnel | shipped |
+| **v0.2** | Bearer-token auth, history persistence in `sessionStorage`, network-error handling (toast + retry) | 1 evening |
+| **v0.3** | Whisper Plan B if Web Speech API fails + automatic fallback based on browser capabilities | 1 weekend |
+| **v0.4** | Named Cloudflare tunnel + personal domain + launchd auto-start service | 1 evening |
+| **v0.5** | pytest tests (backend) + GitHub Actions CI | 1 weekend |
+| **v1.0** | Streaming Claude response + sentence-by-sentence TTS to cut perceived latency | 1 weekend |
+| **v1.1** | Premium French ElevenLabs voice (optional) | 1 evening |
+| **v2.0** | "Hey Clo-clo" wake-word (Porcupine or equivalent) | 1 weekend |
+| **v2.1** | Claude tool use: weather, GPS position via companion phone, POI search, music control | 1 week |
+| **v3.0** | Move from local Mac → VPS / Raspberry Pi with observability (structured logs, Grafana) | 1 weekend |
 
 ---
 
-## 10. Coûts d'exploitation estimés (régime MVP)
+## 10. Estimated operating cost (MVP regime)
 
-| Poste | Hypothèse | Coût mensuel |
+| Item | Assumption | Monthly cost |
 |---|---|---|
-| API Claude (Sonnet 4.6) | 50 interactions / jour, ~500 tokens in + 100 tokens out chacune | ~3-5 € |
-| Cloudflare quick tunnel | Trafic < 100 Mo / mois | 0 € |
-| Électricité Mac always-on | Mac mini M2, ~7W idle, 24/7 | ~1 € |
-| Domaine perso (post-MVP, optionnel) | `.fr` ou `.com` chez OVH/Gandi | ~1 € (10-12 € / an) |
-| **Total MVP** | | **< 5 € / mois** |
+| Claude API (Sonnet 4.6) | 50 interactions/day, ~500 input + 100 output tokens each | ~3-5 € |
+| Cloudflare quick tunnel | Traffic < 100 MB/month | 0 € |
+| Electricity for the always-on Mac | Mac mini M2, ~7W idle, 24/7 | ~1 € |
+| Personal domain (post-MVP, optional) | `.fr` or `.com` at OVH/Gandi | ~1 € (10-12 €/year) |
+| **MVP total** | | **< 5 €/month** |
 
 ---
 
-## 11. Glossaire
+## 11. Glossary
 
-- **PTT** : Push-to-Talk. Mode où on appuie sur un bouton pour parler, on relâche pour arrêter.
-- **STT** : Speech-to-Text (reconnaissance vocale). Audio → texte.
-- **TTS** : Text-to-Speech (synthèse vocale). Texte → audio.
-- **Web Speech API** : standard W3C couvrant `SpeechRecognition` (STT) et `SpeechSynthesis` (TTS) dans le navigateur.
-- **VAD** : Voice Activity Detection. Détecte automatiquement quand quelqu'un parle (vs silence).
-- **Wake-word** : mot-clé qui réveille l'assistant ("Hey Siri", "Alexa"…).
-- **SPA** : Single Page Application.
-- **Quick tunnel** (cloudflared) : tunnel HTTPS avec URL aléatoire éphémère, sans compte Cloudflare requis.
-- **Named tunnel** (cloudflared) : tunnel HTTPS avec hostname stable, associé à un compte Cloudflare et un domaine.
+- **PTT** — Push-to-Talk. Press to speak, release to stop.
+- **STT** — Speech-to-Text. Audio → text.
+- **TTS** — Text-to-Speech. Text → audio.
+- **Web Speech API** — W3C standard covering `SpeechRecognition` (STT) and `SpeechSynthesis` (TTS) in the browser.
+- **VAD** — Voice Activity Detection. Automatically detects speech vs. silence.
+- **Wake-word** — a keyword that wakes the assistant up ("Hey Siri", "Alexa", …).
+- **SPA** — Single Page Application.
+- **Quick tunnel** (cloudflared) — HTTPS tunnel with a random, ephemeral URL, no Cloudflare account required.
+- **Named tunnel** (cloudflared) — HTTPS tunnel with a stable hostname, tied to a Cloudflare account and a domain.
 
 ---
 
-## 12. Décisions architecturales — journal
+## 12. Architecture decisions — log
 
-| Date | Décision | Raison |
+| Date | Decision | Reason |
 |---|---|---|
-| 2026-05-23 | Stack initiale : FastAPI + HTML vanilla + Web Speech API + cloudflared quick tunnel | MVP en un week-end, validation rapide du risque #1 (compat navigateur Tesla) |
-| 2026-05-23 | Modèle par défaut : Claude Sonnet 4.6 | Équilibre qualité/latence/coût pour conversation casual en français |
-| 2026-05-23 | Historique en mémoire client uniquement | Simplicité maximale, pas de session serveur à gérer |
-| 2026-05-23 | `load_dotenv(override=True)` | Robustesse face à un env hérité contenant déjà la variable (cas : lancement via Claude Code) |
+| 2026-05-23 | Initial stack: FastAPI + vanilla HTML + Web Speech API + cloudflared quick tunnel | MVP in a weekend, fast validation of risk #1 (Tesla browser compatibility) |
+| 2026-05-23 | Default model: Claude Sonnet 4.6 | Quality/latency/cost balance for casual French conversation |
+| 2026-05-23 | History in client memory only | Maximum simplicity, no server session to manage |
+| 2026-05-23 | `load_dotenv(override=True)` | Robust against an inherited env that already defines the variable (case: launching via Claude Code) |

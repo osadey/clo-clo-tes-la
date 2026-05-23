@@ -1,17 +1,19 @@
 # clo-clo-tes-la
 
-Assistant vocal Claude embarqué dans le navigateur d'une Tesla.
+Claude voice assistant embedded in the Tesla web browser.
 
-- Push-to-talk en français
-- Reconnaissance et synthèse vocale natives du navigateur (Web Speech API)
-- Backend FastAPI minimaliste qui relaye vers l'API Claude
-- Exposé en HTTPS via un tunnel cloudflared
+- French push-to-talk interface
+- Browser-native speech recognition and synthesis (Web Speech API)
+- Minimal FastAPI backend that proxies requests to the Anthropic API
+- Exposed over HTTPS through a cloudflared tunnel
 
-## Prérequis
+> The app itself talks to the driver in French — this README and the architecture docs are in English so the project stays approachable to a wider audience.
 
-- Python 3.12 (sur macOS : `brew install python@3.12`)
-- cloudflared (sur macOS : `brew install cloudflared`)
-- Une clé API Anthropic — créer un compte sur [console.anthropic.com](https://console.anthropic.com)
+## Prerequisites
+
+- Python 3.12 (on macOS: `brew install python@3.12`)
+- cloudflared (on macOS: `brew install cloudflared`)
+- An Anthropic API key — create an account at [console.anthropic.com](https://console.anthropic.com)
 
 ## Installation
 
@@ -22,42 +24,42 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
 cp .env.example .env
-# éditer .env et coller ta clé ANTHROPIC_API_KEY
+# edit .env and paste your ANTHROPIC_API_KEY
 ```
 
-## Lancement
+## Running the app
 
-Dans deux terminaux séparés :
+In two separate terminals:
 
-**Terminal 1 — backend :**
+**Terminal 1 — backend:**
 ```bash
 cd clo-clo-tes-la
 source .venv/bin/activate
 uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-**Terminal 2 — tunnel HTTPS public :**
+**Terminal 2 — public HTTPS tunnel:**
 ```bash
 cloudflared tunnel --url http://localhost:8000
 ```
 
-cloudflared affiche une URL publique du type `https://xxxx-xxxx.trycloudflare.com` — c'est celle à ouvrir dans le navigateur de la Tesla.
+cloudflared prints a public URL such as `https://xxxx-xxxx.trycloudflare.com` — that's the one to open in the Tesla browser.
 
-## Test local (recommandé avant la Tesla)
+## Local test (recommended before the Tesla test)
 
-1. Ouvre `http://localhost:8000` dans Chrome ou Safari sur ton Mac
-2. Autorise l'accès au micro
-3. Appuie sur le bouton bleu, parle, relâche
-4. Claude répond à l'oral
+1. Open `http://localhost:8000` in Chrome or Safari on your Mac
+2. Grant microphone permission
+3. Press the blue button, speak, release
+4. Claude replies out loud (in French)
 
-## Test dans la Tesla
+## Tesla test
 
-1. Ouvre l'URL `https://xxxx.trycloudflare.com` dans le navigateur Tesla (voiture à l'arrêt)
-2. Autorise l'accès au micro si demandé
+1. Open the `https://xxxx.trycloudflare.com` URL in the Tesla browser (car parked)
+2. Grant microphone permission if prompted
 3. Push-to-talk
 
-Le risque #1 est que le navigateur Tesla (Chromium ancien) ne supporte pas Web Speech API. Si c'est le cas, on basculera sur Whisper côté backend (audio enregistré dans le navigateur, envoyé au serveur).
+The #1 known risk is that the Tesla browser (an older Chromium) may not support the Web Speech API. If it doesn't, the fallback is to record audio in the browser (MediaRecorder API) and run STT server-side with Whisper.
 
 ## Documentation
 
-- [Architecture détaillée](docs/ARCHITECTURE.md) — diagrammes, choix techniques, sécurité, feuille de route
+- [Detailed architecture](docs/ARCHITECTURE.md) — diagrams, technical choices, security, roadmap
