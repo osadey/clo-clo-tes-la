@@ -61,7 +61,3 @@ Le risque #1 est que le navigateur Tesla (Chromium ancien) ne supporte pas Web S
 ## Documentation
 
 - [Architecture détaillée](docs/ARCHITECTURE.md) — diagrammes, choix techniques, sécurité, feuille de route
-
-## Licence
-
-[MIT](LICENSE)
