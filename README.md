@@ -58,6 +58,10 @@ cloudflared affiche une URL publique du type `https://xxxx-xxxx.trycloudflare.co
 
 Le risque #1 est que le navigateur Tesla (Chromium ancien) ne supporte pas Web Speech API. Si c'est le cas, on basculera sur Whisper côté backend (audio enregistré dans le navigateur, envoyé au serveur).
 
+## Documentation
+
+- [Architecture détaillée](docs/ARCHITECTURE.md) — diagrammes, choix techniques, sécurité, feuille de route
+
 ## Licence
 
 [MIT](LICENSE)
